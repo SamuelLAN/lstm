@@ -160,13 +160,13 @@ class NN:
     ''' 获取随迭代次数下降的学习率 '''
 
     @staticmethod
-    def getLearningRate(base_learning_rate, cur_step, batch_size, decay_times, decay_rate=0.95):
+    def getLearningRate(base_learning_rate, cur_step, decay_times, decay_rate=0.95):
         learning_rate = tf.train.exponential_decay(
             base_learning_rate,  # Base learning rate.
-            cur_step * batch_size,  # Current index into the dataset.
-            decay_times,  # Decay step.
-            decay_rate,  # Decay rate.
-            staircase=True
+            cur_step,       # Current index into the dataset.
+            decay_times,    # Decay step.
+            decay_rate,     # Decay rate.
+            # staircase=True
         )
         tf.summary.scalar('learning_rate', learning_rate)
         return learning_rate
@@ -210,20 +210,30 @@ class NN:
         self.__mergedSummaryOp = tf.summary.merge_all()
         if tf.gfile.Exists(self.__summaryPath):
             tf.gfile.DeleteRecursively(self.__summaryPath)
-        self.__summaryWriter = tf.summary.FileWriter(self.__summaryPath, self.sess.graph)
+        self.__summaryWriterTrain = tf.summary.FileWriter(
+            os.path.join(self.__summaryPath, 'train'), self.sess.graph)
+        self.__summaryWriterVal = tf.summary.FileWriter(
+            os.path.join(self.__summaryPath, 'validation'), self.sess.graph)
 
-    ''' TensorBoard add sumary '''
+    ''' TensorBoard add sumary training '''
 
-    def addSummary(self, feed_dict, step):
+    def addSummaryTrain(self, feed_dict, step):
         summary_str = self.sess.run(self.__mergedSummaryOp, feed_dict)
-        self.__summaryWriter.add_summary(summary_str, step)
-        # self.__summaryWriter.add_graph(self.sess.graph) # @TODO 检验效果
-        self.__summaryWriter.flush()
+        self.__summaryWriterTrain.add_summary(summary_str, step)
+        self.__summaryWriterTrain.flush()
+
+    ''' TensorBoard add sumary validation '''
+
+    def addSummaryVal(self, feed_dict, step):
+        summary_str = self.sess.run(self.__mergedSummaryOp, feed_dict)
+        self.__summaryWriterVal.add_summary(summary_str, step)
+        self.__summaryWriterVal.flush()
 
     ''' TensorBoard close '''
 
     def closeSummary(self):
-        self.__summaryWriter.close()
+        self.__summaryWriterTrain.close()
+        self.__summaryWriterVal.close()
 
     ''' 输出前 num 个节点的图像到 TensorBoard '''
 
@@ -256,13 +266,27 @@ class NN:
         if not os.path.isdir(summary_dir):
             os.mkdir(summary_dir)
         else:
-            for file_name in os.listdir(summary_dir):
-                file_path = os.path.join(summary_dir, file_name)
-                if os.path.isfile(file_path):
-                    os.remove(file_path)
+            self.__removeFileRecursive(summary_dir)
+
+        dirs = ['train', 'validation']
+        for dir_name in dirs:
+            dir_path = os.path.join(summary_dir, dir_name)
+            if not os.path.isdir(dir_path):
+                os.mkdir(dir_path)
+            else:
+                self.__removeFileRecursive(dir_path)
 
         self.__summaryPath = summary_dir
         return self.__summaryPath
+
+
+    @staticmethod
+    def __removeFileRecursive(dir_path):
+        for file_name in os.listdir(dir_path):
+            file_path = os.path.join(dir_path, file_name)
+            if os.path.isfile(file_path):
+                os.remove(file_path)
+
 
     # **************************** 常用模型 ***************************
 

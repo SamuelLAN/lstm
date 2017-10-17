@@ -30,7 +30,7 @@ class LSTM(base.NN):
 
     NUM_UNROLLINGS = 10                             # 序列数据一次输入 nul_unrollings 个数据
     BATCH_SIZE = 64                                 # 随机梯度下降的 batch 大小
-    EPOCH_TIMES = 200                               # 迭代的 epoch 次数
+    EPOCH_TIMES = 20                                # 迭代的 epoch 次数
 
     VOCABULARY_SIZE = load.Download.VOCABULARY_SIZE # 词典大小
     NUM_NODES = 64                                  # layer1 有多少个节点
@@ -42,6 +42,9 @@ class LSTM(base.NN):
     # REGULAR_BETA = 0.01                             # 正则化的 beta 参数
     # MOMENTUM = 0.9                                  # 动量的大小
 
+    # 若校验集的 perplexity 连续超过 EARLY_STOP_CONDITION 次没有低于 best_perplexity_val, 则提前结束迭代
+    EARLY_STOP_CONDITION = 100
+
 
     ''' 自定义 初始化变量 过程 '''
     def init(self):
@@ -50,11 +53,15 @@ class LSTM(base.NN):
 
         # 常量
         self.__iterPerEpoch = int(self.__trainSize // self.BATCH_SIZE)
-        self.__steps = self.EPOCH_TIMES * self.__iterPerEpoch
 
-        # TODO 删除该提示
-        print 'iter_per_epoch: %d' % self.__iterPerEpoch
-        print 'steps: %d' % self.__steps
+        self.__steps = self.__iterPerEpoch
+        self.__summaryFrequency = 100
+        # self.__iterPerEpoch = int(self.__trainSize // self.BATCH_SIZE)
+        # self.__steps = self.EPOCH_TIMES * self.__iterPerEpoch
+        #
+        # # TODO 删除该提示
+        # print 'iter_per_epoch: %d' % self.__iterPerEpoch
+        # print 'steps: %d' % self.__steps
 
         # 输入 与 label
         self.__trainData = list()
@@ -65,7 +72,7 @@ class LSTM(base.NN):
 
         # 随训练次数增多而衰减的学习率
         self.__learningRate = self.getLearningRate(
-            self.BASE_LEARNING_RATE, self.globalStep, self.BATCH_SIZE, self.__steps, self.DECAY_RATE
+            self.BASE_LEARNING_RATE, self.globalStep, self.__steps, self.DECAY_RATE
         )
 
 
@@ -90,35 +97,35 @@ class LSTM(base.NN):
     ''' 加载数据 '''
     def load(self):
         self.__trainSet = load.Data(0.0, 0.64)          # 按 0.64 的比例划分训练集
-        # self.__valSet = load.Data(0.64, 0.8)            # 按 0.16 的比例划分校验集
-        # self.__testSet = load.Data(0.8)                 # 按 0.2  的比例划分测试集
+        self.__valSet = load.Data(0.64, 0.8)            # 按 0.16 的比例划分校验集
+        self.__testSet = load.Data(0.8)                 # 按 0.2  的比例划分测试集
 
         self.__trainSize = self.__trainSet.getSize()
-        # self.__valSize = self.__valSet.getSize()
-        # self.__testSize = self.__testSet.getSize()
+        self.__valSize = self.__valSet.getSize()
+        self.__testSize = self.__testSet.getSize()
 
 
     ''' 模型 '''
     def model(self):
         # ********************** 初始化模型所需的变量 **********************
 
-        with tf.name_scope('cell'):
+        # with tf.name_scope('cell'):
 
-            # 输入门
-            with tf.name_scope('input_gate'):
-                self.__wIX, self.__wIM, self.__bI = self.__initGate()
+        # 输入门
+        with tf.name_scope('input_gate'):
+            self.__wIX, self.__wIM, self.__bI = self.__initGate()
 
-            # 忘记门
-            with tf.name_scope('forget_gate'):
-                self.__wFX, self.__wFM, self.__bF = self.__initGate()
+        # 忘记门
+        with tf.name_scope('forget_gate'):
+            self.__wFX, self.__wFM, self.__bF = self.__initGate()
 
-            # 记忆单元
-            with tf.name_scope('lstm_cell'):
-                self.__wCX, self.__wCM, self.__bC = self.__initGate()
+        # 记忆单元
+        with tf.name_scope('lstm_cell'):
+            self.__wCX, self.__wCM, self.__bC = self.__initGate()
 
-            # 输出门
-            with tf.name_scope('output_gate'):
-                self.__wOX, self.__wOM, self.__bO = self.__initGate()
+        # 输出门
+        with tf.name_scope('output_gate'):
+            self.__wOX, self.__wOM, self.__bO = self.__initGate()
 
         # 在序列 unrollings 之间保存状态的变量
         self.__savedOutput = tf.Variable(tf.zeros([self.BATCH_SIZE, self.NUM_NODES]),
@@ -172,8 +179,10 @@ class LSTM(base.NN):
     ''' 计算 loss '''
     def getLoss(self):
         with tf.name_scope('loss'):
+            self.__labels = tf.concat(self.__y, 0, name='labels')
             self.__loss = tf.reduce_mean(
-                tf.nn.softmax_cross_entropy_with_logits(logits=self.__logits, labels=tf.concat(self.__y, 0))
+                tf.nn.softmax_cross_entropy_with_logits(logits=self.__logits, labels=self.__labels),
+                name='loss'
             )
 
 
@@ -181,28 +190,93 @@ class LSTM(base.NN):
     def inference(self):
         with tf.name_scope('predict'):
             # lstm 的输出
-            self.__predict = tf.nn.softmax(self.__logits, name='predict')
+            predict = tf.nn.softmax(self.__logits, name='predict')
 
         with tf.name_scope('perplexity'):
             # 计算 perplexity
-            labels = tf.concat(self.__y, 0, name='labels')
             self.__perplexity = tf.exp(
-                - tf.reduce_sum( tf.log(self.__predict, name='log_predict') * labels ) /
-                tf.cast(tf.shape(labels)[0], dtype=tf.float32), name='perplexity')
+                - tf.reduce_sum( tf.log(predict, name='log_predict') * self.__labels ) /
+                tf.cast(tf.shape(self.__labels)[0], dtype=tf.float32), name='perplexity')
 
-        # 将 perplexity 记录到 summary 中
-        tf.summary.scalar('perplexity', self.__perplexity)
+        # # 将 perplexity 记录到 summary 中
+        # tf.summary.scalar('perplexity_train', self.__perplexity)
 
 
     ''' 获取 train_op '''
     def getTrainOp(self, loss, learning_rate, global_step):
-        tf.summary.scalar('loss', loss)     # TensorBoard 记录 loss
-
         with tf.name_scope('optimizer'):
             optimizer = tf.train.GradientDescentOptimizer(learning_rate)
             gradients, v = zip(*optimizer.compute_gradients(loss))
             gradients, _ = tf.clip_by_global_norm(gradients, self.CLIP_NORM)
             return optimizer.apply_gradients(zip(gradients, v), global_step=global_step)
+
+
+    ''' 记录训练过程中的 loss 与 perplexity 的均值 '''
+    def __summaryMean(self):
+        with tf.name_scope('summary'):
+            # 新建两个 placeholder 用于 tensorboard 可以记录 loss 与 perplexity 的均值
+            self.__lossPH = tf.placeholder(tf.float32, name='loss_ph')
+            self.__perplexityPH = tf.placeholder(tf.float32, name='perplexity')
+
+            # self.__perplexityTrain = tf.placeholder(tf.float32, name='perplexity_train_ph')
+            # self.__perplexityVal = tf.placeholder(tf.float32, name='perplexity_val_ph')
+
+            # 将数据记录到 tensorboard summary
+            tf.summary.scalar('mean_loss', self.__lossPH)
+            tf.summary.scalar('mean_perplexity', self.__perplexityPH)
+            # tf.summary.scalar('mean_perplexity', self.__perplexityTrain)
+            # tf.summary.scalar('validation_perplexity', self.__perplexityVal)
+
+
+    ''' 初始化 校验集 或 测试集 预测所需的变量 '''
+    def __predict(self):
+        self.__sampleInput = tf.placeholder(tf.float32, shape=[1, self.VOCABULARY_SIZE],
+                                            name='sample_input')
+
+        self.__sampleSavedOutput = tf.Variable(tf.zeros([1, self.NUM_NODES]), name='sample_saved_output')
+        self.__sampleSavedState = tf.Variable(tf.zeros([1, self.NUM_NODES]), name='sample_saved_state')
+        self.__sampleLogProb = tf.Variable(0, dtype=tf.float32, name='sample_log_prob')
+
+        self.__sampleResetState = tf.group(
+            self.__sampleSavedOutput.assign(tf.zeros([1, self.NUM_NODES])),
+            self.__sampleSavedState.assign(tf.zeros([1, self.NUM_NODES])),
+            self.__sampleLogProb.assign(0)
+        )
+
+        self.__sampleOutput, self.__sampleState = self.__cell(self.__sampleInput, self.__sampleSavedOutput,
+                                                              self.__sampleSavedState)
+
+        with tf.control_dependencies([
+            self.__sampleSavedOutput.assign(self.__sampleOutput),
+            self.__sampleSavedState.assign(self.__sampleState)
+        ]):
+            self.__samplePrediction = tf.nn.softmax(tf.nn.xw_plus_b(self.__sampleOutput, self.__w, self.__b))
+
+
+    ''' 评估 dataset 的 perplexity '''
+    def __evaluate(self, dataset, data_size):
+        self.sess.run(self.__sampleResetState)
+        valid_logprob = 0
+        for _ in range(data_size):
+            batch = dataset.nextBatches(1, 1)
+            predictions = self.sess.run(self.__samplePrediction, {self.__sampleInput: batch[0]})
+            valid_logprob += self.__logProb(predictions, batch[1])
+        return float(np.exp(valid_logprob / data_size))
+
+
+    ''' 随机预测文本 '''
+    def __randomPredictText(self, lines = 5):
+        self.echo('=' * 80)
+        for _ in range(lines):
+            feed = self.__sample(self.__randomDistribution())
+            sentence = self.matrix2char(feed)
+            self.sess.run(self.__sampleResetState)
+            for _ in range(79):
+                prediction = self.sess.run(self.__samplePrediction, {self.__sampleInput: feed})
+                feed = self.__sample(prediction)
+                sentence += self.matrix2char(feed)
+            self.echo(sentence)
+        self.echo('=' * 80)
 
 
     '''
@@ -248,51 +322,10 @@ class LSTM(base.NN):
         return b / np.sum(b, 1)[:, None]
 
 
-    ''' 初始化 校验集 或 测试集 预测所需的变量 '''
-    def __predict(self):
-        self.__sampleInput = tf.placeholder(tf.float32, shape=[1, self.VOCABULARY_SIZE],
-                                            name='sample_input')
-        self.__sampleSavedOutput = tf.Variable( tf.zeros([1, self.NUM_NODES]), name='sample_saved_output' )
-        self.__sampleSavedState = tf.Variable( tf.zeros([1, self.NUM_NODES]), name='sample_saved_state' )
-        self.__sampleResetState = tf.group(
-            self.__sampleSavedOutput.assign(tf.zeros([1, self.NUM_NODES])),
-            self.__sampleSavedState.assign(tf.zeros([1, self.NUM_NODES]))
-        )
-        self.__sampleOutput, self.__sampleState = self.__cell(self.__sampleInput, self.__sampleSavedOutput, self.__sampleSavedState)
-
-        with tf.control_dependencies([
-            self.__sampleSavedOutput.assign(self.__sampleOutput),
-            self.__sampleSavedState.assign(self.__sampleState)
-        ]):
-            self.__samplePrediction = tf.nn.softmax( tf.nn.xw_plus_b(self.__sampleOutput, self.__w, self.__b) )
-
-
-    # ''' 计算准确率 '''
-    # @staticmethod
-    # def __getAccuracy(labels, predict, _size, name = ''):
-    #     if name:
-    #         scope_name = '%s_accuracy' % name
-    #     else:
-    #         scope_name = 'accuracy'
-    #
-    #     with tf.name_scope(scope_name):
-    #         labels = tf.argmax(labels, 1)
-    #         predict = tf.argmax(predict, 1)
-    #         correct = tf.equal(labels, predict) # 返回 predict 与 labels 相匹配的结果
-    #
-    #         accuracy = tf.divide( tf.reduce_sum( tf.cast(correct, tf.float32) ), _size ) # 计算准确率
-    #         if name: # 将 准确率 记录到 TensorBoard
-    #             tf.summary.scalar('accuracy', accuracy)
-    #
-    #         return accuracy
-    #
-    #
-    # ''' 使用不同数据 评估模型 '''
-    # def evaluation(self, data_set, batch_size, accuracy = None):
-    #     batch_x, batch_y = data_set.nextBatch(batch_size)
-    #     return self.sess.run(accuracy, {
-    #         self.__preX: batch_x, self.__preY: batch_y, self.__preSize: batch_x.shape[0]
-    #     })
+    ''' 矩阵转换为 string '''
+    @staticmethod
+    def matrix2char(matrix):
+        return load.Download.id2Char(np.argmax(matrix, 1))
 
 
     def run(self):
@@ -308,8 +341,11 @@ class LSTM(base.NN):
         # 生成训练的 op
         train_op = self.getTrainOp(self.__loss, self.__learningRate, self.globalStep)
 
-        # ret_accuracy_train = self.__getAccuracy(self.__y, self.__output, self.__size, name='training')
-        # ret_accuracy_val = self.__getAccuracy(self.__preY, self.__predict, self.__preSize, name='validation')
+        # 记录 loss 与 perplexity 的均值到 tensorboard
+        self.__summaryMean()
+
+        # 预测 (随机数据 或 校验集)
+        self.__predict()
 
         # 初始化所有变量
         self.initVariables()
@@ -317,69 +353,83 @@ class LSTM(base.NN):
         # TensorBoard merge summary
         self.mergeSummary()
 
-        # best_accuracy_val = 0           # 校验集准确率 最好的情况
-        # decrease_acu_val_times = 0      # 校验集准确率连续下降次数
-        #
-        # # 获取校验集的数据，用于之后获取校验集准确率，不需每次循环重新获取
-        # batch_val_x, batch_val_y = self.__valSet.nextBatch(self.__valSize)
-        # batch_val_size = batch_val_x.shape[0]
-        #
+        best_perplexity_val = 1000              # 校验集 perplexity 最好的情况
+        increase_perplexity_val_times = 0       # 校验集 perplexity 连续上升次数
+
         print '\nepoch\taccuracy_val:'
 
-        for step in range(self.__steps):
-            if step % 50 == 0:                          # 输出进度
-                epoch_progress = 1.0 * step % self.__iterPerEpoch / self.__iterPerEpoch * 100.0
-                step_progress = 1.0 * step / self.__steps * 100.0
-                self.echo('step: %d (%d|%.2f%%) / %d|%.2f%%     \r' % (step, self.__iterPerEpoch,
-                                                    epoch_progress, self.__steps, step_progress), False)
+        mean_loss = 0
+        mean_perplexity_train = 0
 
+        for step in range(self.__steps):
             # 给 feed_dict 赋值
             batches = self.__trainSet.nextBatches(self.BATCH_SIZE, self.NUM_UNROLLINGS)
             feed_dict = {}
             for i, batch in enumerate(batches):
                 feed_dict[self.__trainData[i]] = batch
 
-            self.sess.run(train_op, feed_dict=feed_dict)      # 运行 训练
-            # self.sess.run([train_op, self.__perplexity], feed_dict=feed_dict)      # 运行 训练
+            _, loss, perplexity_train = self.sess.run([train_op, self.__loss, self.__perplexity],
+                                                feed_dict=feed_dict)      # 运行 训练
 
-            if (step % self.__iterPerEpoch == 0 or step % 1000 == 0) and step != 0: # 完成一个 epoch 时
-                self.sess.run(self.__perplexity, feed_dict=feed_dict)
+            mean_loss += loss
+            mean_perplexity_train += perplexity_train
 
-                epoch = step // self.__iterPerEpoch     # 获取这次 epoch 的 index
-                print '%d             ' % epoch
+            if step != 0 and step % self.__summaryFrequency == 0:
+                # 输出进度
+                tmp_step = step / self.__summaryFrequency
+                progress = 1.0 * step / self.__steps * 100.0
+                self.echo('step: %d (%d) | %.2f%%           \r' % (step, self.__steps, progress))
 
-                # accuracy_val = self.evaluation(self.__valSet, self.__valSize, ret_accuracy_val) # 获取校验集准确率
-                # print '\n%d\t%.10f%%' % (epoch, accuracy_val)
+                # 计算 loss、perplexity_train 的均值
+                feed_dict[self.__lossPH] = mean_loss / float(self.__summaryFrequency)
+                feed_dict[self.__perplexityPH] = mean_perplexity_train / float(self.__summaryFrequency)
 
-        #         feed_dict = {self.__X   : batch_x,      self.__y    : batch_y,      self.__size     : batch_x.shape[0],
-        #                      self.__preX: batch_val_x,  self.__preY : batch_val_y,  self.__preSize  : batch_val_size}
+                # # 计算 校验集的 perplexity
+                # perplexity_val = self.__evaluate(self.__valSet, int(self.__valSize / 10000))
+                # feed_dict[self.__perplexityVal] = perplexity_val
 
-                self.addSummary(feed_dict, int(step / 1000))       # 输出数据到 TensorBoard
-                # self.addSummary(feed_dict, epoch)       # 输出数据到 TensorBoard
-        #
-        #         if accuracy_val > best_accuracy_val:    # 若校验集准确率 比 最高准确率高
-        #             best_accuracy_val = accuracy_val
-        #             decrease_acu_val_times = 0
-        #
-        #             self.saveModel()                    # 保存模型
-        #
-        #         else:                                   # 否则
-        #             decrease_acu_val_times += 1
-        #             if decrease_acu_val_times > 10:
-        #                 break
-        #
+                self.addSummaryTrain(feed_dict, tmp_step)        # 输出数据到 TensorBoard
+
+                # 计算 校验集的 perplexity
+                perplexity_val = self.__evaluate(self.__valSet, int(self.__valSize / 10000))
+                feed_dict[self.__perplexityPH] = perplexity_val
+
+                self.addSummaryVal(feed_dict, tmp_step)
+
+                # 重置 loss、perplexity_train 的均值
+                mean_loss = 0
+                mean_perplexity_train = 0
+
+                # 随机预测文本，输出到 console 查看效果
+                if step % (10 * self.__summaryFrequency) == 0:
+                    self.__randomPredictText(2)
+
+                # 判断 early stop 的条件
+                if perplexity_val < best_perplexity_val:    # 若校验集的 peplexity 比 best_perplexity_val 低
+                    best_perplexity_val = perplexity_val
+                    increase_perplexity_val_times = 0
+
+                    self.saveModel()                        # 保存模型
+
+                else:                                       # 否则
+                    increase_perplexity_val_times += 1
+                    if increase_perplexity_val_times > self.EARLY_STOP_CONDITION:
+                        break
+
         self.closeSummary() # 关闭 TensorBoard
 
         self.restoreModel() # 恢复模型
 
-        # # 计算 训练集、校验集、测试集 的准确率
-        # accuracy_train = self.evaluation(self.__trainSet, self.__trainSize, ret_accuracy_val)
-        # accuracy_val = self.evaluation(self.__valSet, self.__valSize, ret_accuracy_val)
-        # accuracy_test = self.evaluation(self.__testSet, self.__testSize, ret_accuracy_val)
-        #
-        # print '\ntraining set accuracy: %.6f%%' % accuracy_train
-        # print 'validation set accuracy: %.6f%%' % accuracy_val
-        # print 'test set accuracy: %.6f%%' % accuracy_test
+        # 计算 训练集、校验集、测试集 的 perplexity
+        perplexity_train = self.__evaluate(self.__trainSet, self.__trainSize)
+        perplexity_val = self.__evaluate(self.__valSet, self.__valSize)
+        perplexity_test = self.__evaluate(self.__testSet, self.__testSize)
+
+        print '\ntraining set perplexity: %.6f%%' % perplexity_train
+        print 'validation set perplexity: %.6f%%' % perplexity_val
+        print 'test set perplexity: %.6f%%' % perplexity_test
+
+        self.echo('done')
 
 
 o_nn = LSTM()

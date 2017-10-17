@@ -200,3 +200,17 @@ class Data:
 #
 # o_data = Data()
 # batches = o_data.nextBatches(5, 10)
+# batches2 = o_data.nextBatches(5, 10)
+#
+# import numpy as np
+# for batch in batches:
+#     string = ''
+#     for val in batch:
+#         string += Download.id2Char(np.argmax(val))
+#     print string
+#
+# for batch in batches2:
+#     string = ''
+#     for val in batch:
+#         string += Download.id2Char(np.argmax(val))
+#     print string
