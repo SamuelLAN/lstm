@@ -22,7 +22,7 @@ class Download:
     URL = 'http://mattmahoney.net/dc/'  # 数据的下载目录
     FILE_NAME = 'text8.zip'             # 文件名
     FILE_SIZE = 31344016                # 字节
-    DATA_ROOT = 'data'                  # 数据存放的目录
+    DATA_ROOT = '../data'                  # 数据存放的目录
 
     VOCABULARY_SIZE = len(string.ascii_lowercase) + 1   # [a-z] + ' '
     ORD_FIRST_LETTER = ord(string.ascii_lowercase[0])   # a 的 ascii 码

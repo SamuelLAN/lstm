@@ -5,9 +5,6 @@ from math import sqrt
 from numpy import hstack
 import sys
 import os
-import re
-from multiprocessing import Process
-
 
 '''
  网络的基类
@@ -68,15 +65,8 @@ class NN:
     def __init__(self):
         self.__init()
 
-
-    ''' 析构函数 '''
-    def __del__(self):
-        NN.killTensorboardifRuning()
-        # self.tbProcess.join(10)
-        self.tbProcess.terminate()
-
-
     ''' 初始化 '''
+
     def __init(self):
         self.WList = []  # 存放权重矩阵的 list
         self.bList = []  # 存放偏置量的 list
@@ -118,7 +108,7 @@ class NN:
 
     ''' 计算 loss '''
 
-    def getLoss(self):
+    def getLoss(self, **kwargs):
         pass
 
     ''' 主函数 '''
@@ -136,7 +126,7 @@ class NN:
     ''' 初始化权重矩阵 '''
 
     @staticmethod
-    def initWeight(shape, name='weights'):
+    def initWeight(shape):
         if len(shape) == 4:
             input_nodes = shape[1] * shape[2]
         else:
@@ -147,19 +137,19 @@ class NN:
                 shape,
                 stddev=1.0 / sqrt(float(input_nodes)),
             ),
-            name=name
+            name='weight'
         )
 
     ''' 初始化 bias '''
 
     @staticmethod
-    def initBias(shape, name='bias'):
+    def initBias(shape):
         if len(shape) == 4:
             nodes = shape[2]
         else:
             nodes = shape[-1]
 
-        return tf.Variable(tf.zeros([nodes]), name=name)
+        return tf.Variable(tf.zeros([nodes]), name='bias')
 
     ''' 获取全局的训练 step '''
 
@@ -170,13 +160,13 @@ class NN:
     ''' 获取随迭代次数下降的学习率 '''
 
     @staticmethod
-    def getLearningRate(base_learning_rate, cur_step, decay_times, decay_rate=0.95):
+    def getLearningRate(base_learning_rate, cur_step, batch_size, decay_times, decay_rate=0.95):
         learning_rate = tf.train.exponential_decay(
             base_learning_rate,  # Base learning rate.
-            cur_step,       # Current index into the dataset.
-            decay_times,    # Decay step.
-            decay_rate,     # Decay rate.
-            # staircase=True
+            cur_step * batch_size,  # Current index into the dataset.
+            decay_times,  # Decay step.
+            decay_rate,  # Decay rate.
+            staircase=True
         )
         tf.summary.scalar('learning_rate', learning_rate)
         return learning_rate
@@ -220,30 +210,20 @@ class NN:
         self.__mergedSummaryOp = tf.summary.merge_all()
         if tf.gfile.Exists(self.__summaryPath):
             tf.gfile.DeleteRecursively(self.__summaryPath)
-        self.__summaryWriterTrain = tf.summary.FileWriter(
-            os.path.join(self.__summaryPath, 'train'), self.sess.graph)
-        self.__summaryWriterVal = tf.summary.FileWriter(
-            os.path.join(self.__summaryPath, 'validation'), self.sess.graph)
+        self.__summaryWriter = tf.summary.FileWriter(self.__summaryPath, self.sess.graph)
 
-    ''' TensorBoard add sumary training '''
+    ''' TensorBoard add sumary '''
 
-    def addSummaryTrain(self, feed_dict, step):
+    def addSummary(self, feed_dict, step):
         summary_str = self.sess.run(self.__mergedSummaryOp, feed_dict)
-        self.__summaryWriterTrain.add_summary(summary_str, step)
-        self.__summaryWriterTrain.flush()
-
-    ''' TensorBoard add sumary validation '''
-
-    def addSummaryVal(self, feed_dict, step):
-        summary_str = self.sess.run(self.__mergedSummaryOp, feed_dict)
-        self.__summaryWriterVal.add_summary(summary_str, step)
-        self.__summaryWriterVal.flush()
+        self.__summaryWriter.add_summary(summary_str, step)
+        # self.__summaryWriter.add_graph(self.sess.graph) # @TODO 检验效果
+        self.__summaryWriter.flush()
 
     ''' TensorBoard close '''
 
     def closeSummary(self):
-        self.__summaryWriterTrain.close()
-        self.__summaryWriterVal.close()
+        self.__summaryWriter.close()
 
     ''' 输出前 num 个节点的图像到 TensorBoard '''
 
@@ -276,72 +256,13 @@ class NN:
         if not os.path.isdir(summary_dir):
             os.mkdir(summary_dir)
         else:
-            self.__removeFileRecursive(summary_dir)
-
-        dirs = ['train', 'validation']
-        for dir_name in dirs:
-            dir_path = os.path.join(summary_dir, dir_name)
-            if not os.path.isdir(dir_path):
-                os.mkdir(dir_path)
-            else:
-                self.__removeFileRecursive(dir_path)
+            for file_name in os.listdir(summary_dir):
+                file_path = os.path.join(summary_dir, file_name)
+                if os.path.isfile(file_path):
+                    os.remove(file_path)
 
         self.__summaryPath = summary_dir
-
-        # 异步在终端运行 tensorboard
-        self.runTensorboard(self.__summaryPath)
         return self.__summaryPath
-
-
-    @staticmethod
-    def __removeFileRecursive(dir_path):
-        for file_name in os.listdir(dir_path):
-            file_path = os.path.join(dir_path, file_name)
-            if os.path.isfile(file_path):
-                os.remove(file_path)
-
-    @staticmethod
-    def cmd(command):
-        return os.popen(command).read()
-
-
-    ''' 若 tensorboard 正在运行, kill tensorboard 进程 '''
-    @staticmethod
-    def killTensorboardifRuning():
-        try:
-            # 检查 tensorboard 是否正在运行
-            ps_cmd = NN.cmd('ps aux | grep tensorboard')
-            ps_cmd = ps_cmd.replace('\r', '').split('\n')
-
-            reg = re.compile(r'\bpython\s+')
-            reg_space = re.compile(r'\s+')
-
-            for line in ps_cmd:
-                # 若 tensorboard 正在运行, kill 进程
-                if reg.search(line):
-                    pid = int(reg_space.split(line)[1])
-                    NN.cmd('kill -9 %d' % pid)
-
-        except Exception, ex:
-            print ex
-
-
-    '''
-     同步状态 自动在终端打开 cmd (默认端口为 6006，port 参数可以自己指定端口)
-    '''
-    @staticmethod
-    def __runTensorboardSync(path, port=6006):
-        try:
-            NN.cmd('tensorboard --logdir=%s --port=%d' % (path, port))
-        except Exception, ex:
-            print ex
-
-
-    ''' 异步状态，自动在终端打开 cmd (默认端口为 6006，port 参数可以自己指定端口) '''
-    def runTensorboard(self, path, port=6006):
-        NN.killTensorboardifRuning()
-        self.tbProcess = Process(target=NN.__runTensorboardSync, args=(path, port))
-        self.tbProcess.start()
 
     # **************************** 常用模型 ***************************
 

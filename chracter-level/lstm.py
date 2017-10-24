@@ -5,9 +5,10 @@ import sys
 
 # 将运行路径切换到当前文件所在路径
 cur_dir_path = os.path.split(__file__)[0]
+root_dir_path = os.path.split(cur_dir_path)[0]
 if cur_dir_path:
     os.chdir(cur_dir_path)
-    sys.path.append(cur_dir_path)
+    sys.path.append(root_dir_path)
 
 import base
 import load
@@ -21,10 +22,10 @@ import tensorflow as tf
     一个比较简单易懂的讲解：http://blog.csdn.net/prom1201/article/details/52221822
 '''
 class LSTM(base.NN):
-    MODEL_NAME = 'lstm'                             # 模型的名称
+    MODEL_NAME = 'lstm_chracter_level'                             # 模型的名称
 
     BASE_LEARNING_RATE = 10.0                       # 初始 学习率
-    DECAY_RATE = 0.1                                # 学习率 的 下降速率
+    DECAY_RATE = 1e-3                                # 学习率 的 下降速率
 
     CLIP_NORM = 1.25                                # 梯度剪切的参数
 
@@ -72,7 +73,7 @@ class LSTM(base.NN):
 
         # 随训练次数增多而衰减的学习率
         self.__learningRate = self.getLearningRate(
-            self.BASE_LEARNING_RATE, self.globalStep, self.__steps, self.DECAY_RATE
+            self.BASE_LEARNING_RATE, self.globalStep, self.__steps / 10, self.DECAY_RATE
         )
 
 
