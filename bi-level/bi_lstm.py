@@ -26,9 +26,11 @@ class LSTM(base.NN):
     MODEL_NAME = 'lstm_bi_level'                    # 模型的名称
 
     BASE_LEARNING_RATE = 10.0                       # 初始 学习率
-    DECAY_RATE = 1e-3                               # 学习率 的 下降速率
+    DECAY_RATE = 1e-3                                # 学习率 的 下降速率
 
     CLIP_NORM = 1.25                                # 梯度剪切的参数
+
+    KEEP_PROB = 0.8                                 # dropout 的 keep_prob
 
     NUM_UNROLLINGS = 10                             # 序列数据一次输入 nul_unrollings 个数据
     BATCH_SIZE = 64                                 # 随机梯度下降的 batch 大小
@@ -62,10 +64,6 @@ class LSTM(base.NN):
         self.__summaryFrequency = 100
         # self.__iterPerEpoch = int(self.__trainSize // self.BATCH_SIZE)
         # self.__steps = self.EPOCH_TIMES * self.__iterPerEpoch
-        #
-        # # TODO 删除该提示
-        # print 'iter_per_epoch: %d' % self.__iterPerEpoch
-        # print 'steps: %d' % self.__steps
 
         # 输入 与 label
         self.__trainData = []
@@ -88,6 +86,17 @@ class LSTM(base.NN):
         self.__learningRate = self.getLearningRate(
             self.BASE_LEARNING_RATE, self.globalStep, self.__steps / 10, self.DECAY_RATE
         )
+
+        # self.__learningRate = self.getLearningRate(
+        #     self.BASE_LEARNING_RATE, self.globalStep, 15 * self.__summaryFrequency, self.DECAY_RATE, True
+        # )
+
+        # 初始化 one_hot_op
+        self.__oneHotPlace = tf.placeholder(tf.int32, name='one_hot_place_holder')
+        self.__oneHotOp = tf.one_hot(self.__oneHotPlace, self.VOCABULARY_SIZE, name='one_hot_op')
+
+        # self.__keepProb = tf.placeholder(tf.float32, name='keep_prob')
+        self.__keepProb = tf.constant(0.5, dtype=tf.float32, name='keep_prob')
 
 
     ''' 初始化 各种门需要的 权重矩阵 以及 偏置量 '''
@@ -145,14 +154,16 @@ class LSTM(base.NN):
             self.__wOX, self.__wOM, self.__bO = self.__initGate()
 
         # 在序列 unrollings 之间保存状态的变量
-        self.__savedOutput = tf.Variable(tf.zeros([self.BATCH_SIZE, self.NUM_NODES]),
-                                         trainable=False, name='saved_output')
-        self.__savedState = tf.Variable(tf.zeros([self.BATCH_SIZE, self.NUM_NODES]),
-                                        trainable=False, name='saved_state')
+        with tf.name_scope('saved_variable'):
+            self.__savedOutput = tf.Variable(tf.zeros([self.BATCH_SIZE, self.NUM_NODES]),
+                                             trainable=False, name='saved_output')
+            self.__savedState = tf.Variable(tf.zeros([self.BATCH_SIZE, self.NUM_NODES]),
+                                            trainable=False, name='saved_state')
 
         # 最后的分类器
-        self.__w = self.initWeight(self.SHAPE_FC_W, name='w')
-        self.__b = self.initBias(self.SHAPE_FC_W, name='b')
+        with tf.name_scope('fc'):
+            self.__w = self.initWeight(self.SHAPE_FC_W, name='w')
+            self.__b = self.initBias(self.SHAPE_FC_W, name='b')
 
         # ************************* 生成模型 ****************************
 
@@ -174,6 +185,8 @@ class LSTM(base.NN):
     ''' 定义每个单元里的计算过程 '''
     def __cell(self, _input, _output, _state):
         with tf.name_scope('cell'):
+            # _input = tf.nn.dropout(_input, self.__keepProb, name='input_dropout')
+
             with tf.name_scope('input_gate'):
                 input_gate = tf.sigmoid( tf.matmul(_input, self.__wIX) + tf.matmul(_output, self.__wIM) + self.__bI, name='input_gate' )
 
@@ -188,6 +201,7 @@ class LSTM(base.NN):
                 output_gate = tf.sigmoid( tf.matmul(_input, self.__wOX) + tf.matmul(_output, self.__wOM) + self.__bO, name='output_gate' )
 
             _output = tf.multiply(output_gate, tf.tanh(_state), name='output')
+            # _output = tf.nn.dropout(_output, self.__keepProb, name='output_drop')
 
             return _output, _state
 
@@ -241,27 +255,28 @@ class LSTM(base.NN):
 
     ''' 初始化 校验集 或 测试集 预测所需的变量 '''
     def __predict(self):
-        self.__sampleInput = tf.placeholder(tf.int32, name='sample_input')
-        sample_embed = tf.nn.embedding_lookup(self.__embeddings, self.__sampleInput, name='sample_embed_input')
+        with tf.name_scope('sample_predict'):
+            self.__sampleInput = tf.placeholder(tf.int32, name='sample_input')
+            sample_embed = tf.nn.embedding_lookup(self.__embeddings, self.__sampleInput, name='sample_embed_input')
 
-        self.__sampleSavedOutput = tf.Variable(tf.zeros([1, self.NUM_NODES]), name='sample_saved_output')
-        self.__sampleSavedState = tf.Variable(tf.zeros([1, self.NUM_NODES]), name='sample_saved_state')
-        self.__sampleLogProb = tf.Variable(0, dtype=tf.float32, name='sample_log_prob')
+            self.__sampleSavedOutput = tf.Variable(tf.zeros([1, self.NUM_NODES]), name='sample_saved_output')
+            self.__sampleSavedState = tf.Variable(tf.zeros([1, self.NUM_NODES]), name='sample_saved_state')
+            self.__sampleLogProb = tf.Variable(0, dtype=tf.float32, name='sample_log_prob')
 
-        self.__sampleResetState = tf.group(
-            self.__sampleSavedOutput.assign(tf.zeros([1, self.NUM_NODES])),
-            self.__sampleSavedState.assign(tf.zeros([1, self.NUM_NODES])),
-            self.__sampleLogProb.assign(0)
-        )
+            self.__sampleResetState = tf.group(
+                self.__sampleSavedOutput.assign(tf.zeros([1, self.NUM_NODES])),
+                self.__sampleSavedState.assign(tf.zeros([1, self.NUM_NODES])),
+                self.__sampleLogProb.assign(0)
+            )
 
-        self.__sampleOutput, self.__sampleState = self.__cell(sample_embed, self.__sampleSavedOutput,
-                                                              self.__sampleSavedState)
+            self.__sampleOutput, self.__sampleState = self.__cell(sample_embed, self.__sampleSavedOutput,
+                                                                  self.__sampleSavedState)
 
-        with tf.control_dependencies([
-            self.__sampleSavedOutput.assign(self.__sampleOutput),
-            self.__sampleSavedState.assign(self.__sampleState)
-        ]):
-            self.__samplePrediction = tf.nn.softmax(tf.nn.xw_plus_b(self.__sampleOutput, self.__w, self.__b))
+            with tf.control_dependencies([
+                self.__sampleSavedOutput.assign(self.__sampleOutput),
+                self.__sampleSavedState.assign(self.__sampleState)
+            ]):
+                self.__samplePrediction = tf.nn.softmax(tf.nn.xw_plus_b(self.__sampleOutput, self.__w, self.__b))
 
 
     ''' 评估 dataset 的 perplexity '''
@@ -269,9 +284,11 @@ class LSTM(base.NN):
         self.sess.run(self.__sampleResetState)
         valid_logprob = 0
         for _ in range(data_size):
-            batch = dataset.nextBatches(1, 1)
-            predictions = self.sess.run(self.__samplePrediction, {self.__sampleInput: batch[0]})
-            valid_logprob += self.__logProb(predictions, batch[1])
+            batches = dataset.nextBatches(1, 1)
+            predictions, one_hot_labels = self.sess.run([self.__samplePrediction, self.__oneHotOp],
+                                        {self.__sampleInput: batches[0], self.__oneHotPlace: batches[1]})
+            valid_logprob += self.__logProb(predictions, one_hot_labels)
+
         return float(np.exp(valid_logprob / data_size))
 
 
@@ -283,7 +300,7 @@ class LSTM(base.NN):
             sentence = self.id2Bi(feed)
             self.sess.run(self.__sampleResetState)
             for _ in range(79):
-                prediction = self.sess.run(self.__samplePrediction, {self.__sampleInput: feed})
+                prediction = self.sess.run(self.__samplePrediction, {self.__sampleInput: [feed]})
                 feed = self.__sample(prediction)
                 sentence += self.id2Bi(feed)
             self.echo(sentence)
@@ -387,6 +404,7 @@ class LSTM(base.NN):
         for step in range(self.__steps):
             # 给 feed_dict 赋值
             batches = self.__trainSet.nextBatches(self.BATCH_SIZE, self.NUM_UNROLLINGS)
+            # feed_dict = {self.__keepProb: self.KEEP_PROB}
             feed_dict = {}
             for i, batch in enumerate(batches):
                 feed_dict[self.__trainData[i]] = batch
@@ -435,14 +453,16 @@ class LSTM(base.NN):
                     if increase_perplexity_val_times > self.EARLY_STOP_CONDITION:
                         break
 
+        self.echo('finish training         ')
+
         self.closeSummary() # 关闭 TensorBoard
 
         self.restoreModel() # 恢复模型
 
         # 计算 训练集、校验集、测试集 的 perplexity
-        perplexity_train = self.__evaluate(self.__trainSet, self.__trainSize)
-        perplexity_val = self.__evaluate(self.__valSet, self.__valSize)
-        perplexity_test = self.__evaluate(self.__testSet, self.__testSize)
+        perplexity_train = self.__evaluate(self.__trainSet, int(self.__trainSize / 100))
+        perplexity_val = self.__evaluate(self.__valSet, int(self.__valSize / 100))
+        perplexity_test = self.__evaluate(self.__testSet, int(self.__testSize / 100))
 
         print '\ntraining set perplexity: %.6f%%' % perplexity_train
         print 'validation set perplexity: %.6f%%' % perplexity_val

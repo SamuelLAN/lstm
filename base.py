@@ -170,13 +170,13 @@ class NN:
     ''' 获取随迭代次数下降的学习率 '''
 
     @staticmethod
-    def getLearningRate(base_learning_rate, cur_step, decay_times, decay_rate=0.95):
+    def getLearningRate(base_learning_rate, cur_step, decay_times, decay_rate=0.95, staircase=False):
         learning_rate = tf.train.exponential_decay(
             base_learning_rate,  # Base learning rate.
             cur_step,       # Current index into the dataset.
             decay_times,    # Decay step.
             decay_rate,     # Decay rate.
-            # staircase=True
+            staircase=staircase
         )
         tf.summary.scalar('learning_rate', learning_rate)
         return learning_rate

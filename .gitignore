@@ -1,8 +1,9 @@
 .idea
-.idea/**
+.idea/*
 .DS_Store
 text8.zip
 *.pickle
 *.pyc
 *.local
 model/*
+summary/*

@@ -11,7 +11,6 @@ if cur_dir_path:
 
 import numpy as np
 from six.moves import cPickle as pickle
-import tensorflow as tf
 
 
 ''' bi2Embedding '''
