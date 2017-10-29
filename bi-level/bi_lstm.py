@@ -21,12 +21,16 @@ import tensorflow as tf
 '''
  长短途记忆模型 LSTM
     一个比较简单易懂的讲解：http://blog.csdn.net/prom1201/article/details/52221822
+
+ training set perplexity: 19.585459
+ validation set perplexity: 24.048165
+ test set perplexity: 22.251422
 '''
 class LSTM(base.NN):
     MODEL_NAME = 'lstm_bi_level'                    # 模型的名称
 
     BASE_LEARNING_RATE = 10.0                       # 初始 学习率
-    DECAY_RATE = 1e-3                                # 学习率 的 下降速率
+    DECAY_RATE = 1e-3                               # 学习率 的 下降速率
 
     CLIP_NORM = 1.25                                # 梯度剪切的参数
 
@@ -456,9 +460,9 @@ class LSTM(base.NN):
         perplexity_val = self.__evaluate(self.__valSet, int(self.__valSize / 1000))
         perplexity_test = self.__evaluate(self.__testSet, int(self.__testSize / 1000))
 
-        print '\ntraining set perplexity: %.6f%%' % perplexity_train
-        print 'validation set perplexity: %.6f%%' % perplexity_val
-        print 'test set perplexity: %.6f%%' % perplexity_test
+        print '\ntraining set perplexity: %.6f' % perplexity_train
+        print 'validation set perplexity: %.6f' % perplexity_val
+        print 'test set perplexity: %.6f' % perplexity_test
 
         self.echo('done')
 
