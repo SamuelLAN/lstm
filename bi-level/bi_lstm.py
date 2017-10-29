@@ -46,7 +46,6 @@ class LSTM(base.NN):
     SHAPE_FC_W = [NUM_NODES, VOCABULARY_SIZE]       # 最后全连接的权重矩阵的 shape
 
     # REGULAR_BETA = 0.01                             # 正则化的 beta 参数
-    # MOMENTUM = 0.9                                  # 动量的大小
 
     # 若校验集的 perplexity 连续超过 EARLY_STOP_CONDITION 次没有低于 best_perplexity_val, 则提前结束迭代
     EARLY_STOP_CONDITION = 100
@@ -87,15 +86,10 @@ class LSTM(base.NN):
             self.BASE_LEARNING_RATE, self.globalStep, self.__steps / 10, self.DECAY_RATE
         )
 
-        # self.__learningRate = self.getLearningRate(
-        #     self.BASE_LEARNING_RATE, self.globalStep, 15 * self.__summaryFrequency, self.DECAY_RATE, True
-        # )
-
         # 初始化 one_hot_op
         self.__oneHotPlace = tf.placeholder(tf.int32, name='one_hot_place_holder')
         self.__oneHotOp = tf.one_hot(self.__oneHotPlace, self.VOCABULARY_SIZE, name='one_hot_op')
 
-        # self.__keepProb = tf.placeholder(tf.float32, name='keep_prob')
         self.__keepProb = tf.constant(0.5, dtype=tf.float32, name='keep_prob')
 
 
@@ -170,6 +164,7 @@ class LSTM(base.NN):
         self.__outputs = list()
         output = self.__savedOutput
         state = self.__savedState
+
         for _input in self.__X:
             output, state = self.__cell(_input, output, state)
             self.__outputs.append(output)
@@ -227,9 +222,6 @@ class LSTM(base.NN):
             self.__perplexity = tf.exp(
                 - tf.reduce_sum( tf.log(predict, name='log_predict') * self.__labels ) /
                 tf.cast(tf.shape(self.__labels)[0], dtype=tf.float32), name='perplexity')
-
-        # # 将 perplexity 记录到 summary 中
-        # tf.summary.scalar('perplexity_train', self.__perplexity)
 
 
     ''' 获取 train_op '''
@@ -460,9 +452,9 @@ class LSTM(base.NN):
         self.restoreModel() # 恢复模型
 
         # 计算 训练集、校验集、测试集 的 perplexity
-        perplexity_train = self.__evaluate(self.__trainSet, int(self.__trainSize / 100))
-        perplexity_val = self.__evaluate(self.__valSet, int(self.__valSize / 100))
-        perplexity_test = self.__evaluate(self.__testSet, int(self.__testSize / 100))
+        perplexity_train = self.__evaluate(self.__trainSet, int(self.__trainSize / 1000))
+        perplexity_val = self.__evaluate(self.__valSet, int(self.__valSize / 1000))
+        perplexity_test = self.__evaluate(self.__testSet, int(self.__testSize / 1000))
 
         print '\ntraining set perplexity: %.6f%%' % perplexity_train
         print 'validation set perplexity: %.6f%%' % perplexity_val
